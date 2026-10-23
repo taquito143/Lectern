@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Lectern: turn a book into audio</title>
+<meta name="description" content="Upload a PDF, EPUB, DOCX, TXT or HTML file and listen to it read aloud. The voice runs in your browser, so your file never leaves your device.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Press+Start+2P&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: grid;
+    grid-template-rows: var(--header-h) minmax(0, 1fr) auto;
+    height: 100dvh;
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 16px/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+
+  /* Header */
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { margin: 0; font: 700 24px/1 var(--serif); letter-spacing: -0.01em; }
+  .privacy { margin: 0 auto 0 0; color: var(--muted); font-size: 14px; }
+  #toggleRail { display: none; }
+
+  /* Buttons */
+  button, select { font: inherit; color: inherit; }
+  .textbtn {
+    background: none;
+    border: 0;
+    padding: 6px 2px;
+    font-size: 14px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+  .textbtn:hover { text-decoration-thickness: 2px; }
+  .primary {
+    background: var(--ink);
+    color: var(--bg);
+    border: 0;
+    border-radius: 10px;
+    padding: 14px 24px;
+    font-weight: 700;
+    font-size: 17px;
+    cursor: pointer;
+  }
+  .primary:hover { opacity: 0.9; }
+
+  /* Layout */
+  .shell {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    min-height: 0;
+  }
+  .shell.empty { grid-template-columns: minmax(0, 1fr); }
+
+  /* Rail */
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px 14px 24px 18px;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+  }
+  .book h2 { margin: 0 0 4px; font: 650 21px/1.25 var(--serif); overflow-wrap: anywhere; }
+  .meta { margin: 0; color: var(--muted); font-size: 14px; }
+  .rail-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .sections { list-style: none; margin: 0; padding: 0; }
+  .sections li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+  }
+  .sections input[type="checkbox"] { width: 18px; height: 18px; margin: 0 4px 0 6px; accent-color: var(--ink); }
+  .sec {
+    display: grid;
+    gap: 1px;
+    text-align: left;
+    background: none;
+    border: 0;
+    border-left: 3px solid transparent;
+    border-radius: 0 8px 8px 0;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+  .sec:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .sec .t {
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .sec .d { color: var(--muted); font-size: 13px; }
+  .sections li.current .sec {
+    border-left-color: var(--ink);
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+  }
+  .sections li.current .t { font-weight: 700; }
+  .icon {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .icon:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); }
+  .engine { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); font-size: 14px; }
+  .engine summary { cursor: pointer; padding: 4px 0; }
+  .engine p { color: var(--muted); margin: 8px 0 0; }
+
+  /* Stage */
+  .stage { min-height: 0; overflow-y: auto; position: relative; }
+  .alert {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    gap: 12px;
+    align-items: start;
+    justify-content: space-between;
+    margin: 0;
+    padding: 12px 20px;
+    background: var(--danger-bg);
+    color: var(--danger-ink);
+    font-size: 15px;
+  }
+  .alert button { background: none; border: 0; font-size: 22px; line-height: 1; cursor: pointer; color: inherit; }
+  .busy { margin: 0; padding: 14px 24px; color: var(--muted); }
+
+  /* Hero */
+  .hero { max-width: 780px; margin: 0 auto; padding: clamp(36px, 9vh, 104px) 32px 48px; }
+  .hero h2 {
+    margin: 0 0 28px;
+    font: 600 clamp(40px, 6.4vw, 76px)/1.03 var(--serif);
+    letter-spacing: -0.025em;
+    font-optical-sizing: auto;
+  }
+  .sweep { margin: 0 0 32px; font: 400 clamp(19px, 2vw, 23px)/1.7 var(--serif); max-width: 52ch; }
+  .sweep span {
+    background-image: linear-gradient(var(--hl), var(--hl));
+    background-repeat: no-repeat;
+    background-size: 0% 100%;
+    border-radius: 0.25em;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    animation: sweep 0.9s cubic-bezier(0.3, 0.7, 0.2, 1) forwards;
+  }
+  .sweep span:nth-child(1) { animation-delay: 0.3s; }
+  .sweep span:nth-child(2) { animation-delay: 1.3s; }
+  .sweep span:nth-child(3) { animation-delay: 2.3s; }
+  @keyframes sweep {
+    0% { background-size: 0% 100%; color: var(--ink); }
+    60% { background-size: 100% 100%; color: var(--ink); }
+    100% { background-size: 100% 100%; color: var(--hl-ink); }
+  }
+  .cta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-bottom: 26px; }
+  .cta .textbtn { font-size: 16px; }
+  .fine { margin: 0 0 8px; color: var(--muted); font-size: 14px; max-width: 60ch; }
+  body.dragging .stage { outline: 3px dashed var(--ink); outline-offset: -14px; }
+
+  /* Reader */
+  .reader { max-width: 64ch; margin: 0 auto; padding: 36px 28px 45vh; }
+  .readerhead { margin: 0 0 26px; color: var(--muted); font-size: 14px; font-weight: 500; }
+  .text { font: 400 clamp(19px, 1.2vw + 14px, 23px)/1.75 var(--serif); font-optical-sizing: auto; }
+  .text p { margin: 0 0 1.15em; }
+  .text p.h { margin-top: 1.5em; font-size: 1.35em; font-weight: 650; line-height: 1.3; }
+  .u {
+    cursor: pointer;
+    border-radius: 0.25em;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    transition: background-color 0.15s;
+  }
+  .u:hover { background: color-mix(in srgb, var(--hl) 40%, transparent); }
+  .u.on { background: var(--hl); color: var(--hl-ink); }
+
+  /* Player */
+  .player {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "status status status" "transport scrub opts";
+    align-items: center;
+    gap: 6px 28px;
+    padding: 10px 24px calc(14px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+  }
+  .player.off { opacity: 0.5; pointer-events: none; }
+  .statusbar { grid-area: status; display: flex; align-items: center; gap: 14px; min-height: 22px; font-size: 14px; color: var(--muted); }
+  .statusbar progress { width: 160px; height: 8px; accent-color: var(--ink); }
+  .transport { grid-area: transport; display: flex; align-items: center; gap: 6px; }
+  .ctl {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    background: none;
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  .ctl:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+  .ctl:disabled { opacity: 0.35; cursor: default; }
+  .ctl.big { width: 58px; height: 58px; background: var(--ink); color: var(--bg); }
+  .ctl.big:hover:not(:disabled) { background: var(--ink); opacity: 0.88; }
+  .ctl.big[aria-busy="true"] { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.45; } }
+  .scrubwrap { grid-area: scrub; min-width: 0; }
+  .scrubwrap input[type="range"] { width: 100%; margin: 0; accent-color: var(--ink); }
+  .scrubmeta { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
+  .opts { grid-area: opts; display: flex; gap: 14px; }
+  .opts label { display: grid; gap: 2px; font-size: 13px; color: var(--muted); }
+  .opts select {
+    min-width: 96px;
+    padding: 8px 10px;
+    background: var(--bg);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 15px;
+  }
+  .engine select { padding: 6px 8px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; }
+
+  #fileWarn { margin: 0; padding: 10px 24px; background: var(--danger-bg); color: var(--danger-ink); font-size: 15px; grid-column: 1 / -1; }
+
+  @media (max-width: 820px) {
+    .top { padding: 0 16px; gap: 12px; }
+    .privacy { font-size: 13px; }
+    body.has-book #toggleRail { display: inline-flex; }
+    .shell { grid-template-columns: minmax(0, 1fr); }
+    .rail {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      border-right: 0;
+      transform: translateX(-102%);
+      transition: transform 0.2s ease;
+    }
+    body.rail-open .rail { transform: none; }
+    .player {
+      grid-template-columns: 1fr auto;
+      grid-template-areas: "status status" "scrub scrub" "transport opts";
+      gap: 6px 14px;
+      padding: 8px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    }
+    .opts select { min-width: 80px; }
+    .hero { padding: 32px 20px 40px; }
+    .reader { padding: 24px 18px 45vh; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sweep span { animation: none; background-size: 100% 100%; color: var(--hl-ink); }
+    .rail, .u { transition: none; }
+    .ctl.big[aria-busy="true"] { animation: none; }
+  }
+
+  /* Pixel-art bookshop skin. Palette: #84B067 green, #fff8e6 cream, #fff6ed paper,
+     #F1DDCF blush, #a99c91 taupe. Text uses deep shades of the taupe so it stays readable. */
+  :root {
+    --bg: #fff8e6;
+    --panel: #fff6ed;
+    --ink: #3b3531;
+    --muted: #6f655d;
+    --line: #a99c91;
+    --edge: #a99c91;
+    --hl: #84B067;
+    --hl-ink: #3b3531;
+    --soft: #F1DDCF;
+    --danger-bg: #F1DDCF;
+    --danger-ink: #3b3531;
+    --player-bg: #F1DDCF;
+    --play-bg: #84B067;
+    --play-ink: #3b3531;
+    --serif: "DM Mono", monospace;
+    --sans: "DM Mono", monospace;
+    --header-h: 58px;
+    color-scheme: light;
+  }
+  * { border-radius: 0 !important; }
+  body { background: var(--bg); font-size: 13px; letter-spacing: -.025em; -webkit-font-smoothing: none; }
+  button, select, input { font: inherit; }
+  .top { background: var(--panel); border-bottom: 2px solid var(--edge); padding: 0 22px; gap: 16px; }
+  .brand { font: 500 18px/1 "Press Start 2P", monospace; letter-spacing: -1.5px; }
+  .privacy { font-size: 11px; }
+  .primary { background: var(--hl); color: var(--hl-ink); border: 2px solid var(--edge); padding: 13px 18px; font-size: 12px; box-shadow: 4px 4px 0 var(--edge); font-weight: 500; }
+  .primary:hover { transform: translate(2px,2px); box-shadow: 2px 2px 0 var(--edge); opacity: 1; }
+  .textbtn { font-size: 11px; text-underline-offset: 2px; }
+  .shell { grid-template-columns: minmax(260px, 310px) minmax(0,1fr); }
+  .rail { background: var(--panel); border-right: 2px solid var(--edge); padding: 18px 13px 22px; gap: 12px; }
+  .book h2 { font: 500 15px/1.5 "DM Mono", monospace; }
+  .meta, .sec .d { font-size: 11px; }
+  .sections li { border-bottom: 1px solid var(--edge); }
+  .sec { border-left-width: 4px; padding: 9px 7px; }
+  .sections li.current .sec { background: var(--soft); border-left-color: var(--hl); }
+  .sec .t { font-size: 12px; }
+  .icon { width: 28px; height: 28px; }
+  .stage { background: var(--bg); }
+  .hero { max-width: 850px; padding: clamp(36px,7vw,90px) clamp(24px,7vw,90px); }
+  .hero h2 { max-width: 720px; font: 500 clamp(21px,3.2vw,38px)/1.35 "Press Start 2P", "DM Mono", monospace; letter-spacing: -1.5px; }
+  .sweep { max-width: 620px; font-size: 12px; line-height: 2; }
+  .sweep span { background: var(--hl); color: var(--hl-ink); }
+  .cta { margin-top: 28px; gap: 20px; }
+  .fine { max-width: 600px; font-size: 11px; line-height: 1.8; }
+  .reader { max-width: 880px; padding: 35px clamp(24px,6vw,80px) 45vh; }
+  .readerhead { border-bottom: 2px solid var(--edge); padding-bottom: 12px; font-size: 11px; }
+  .text { font: 400 15px/2 "DM Mono", monospace; }
+  .u { text-decoration-thickness: 2px; }
+  .player { background: var(--player-bg); color: var(--ink); border-top: 2px solid var(--edge); padding: 12px 22px 14px; gap: 16px; }
+  .statusbar { font-size: 11px; }
+  .ctl { border: 2px solid var(--edge); background: var(--panel); width: 40px; height: 38px; }
+  .ctl.big { width: 52px; height: 48px; background: var(--play-bg); color: var(--play-ink); border: 2px solid var(--edge); box-shadow: 3px 3px 0 var(--edge); }
+  .scrubwrap input { accent-color: var(--ink); }
+  .opts { font-size: 11px; gap: 12px; }
+  select { background: var(--panel); border: 1px solid var(--edge); padding: 6px 22px 6px 7px; min-height: 32px; }
+  progress { accent-color: var(--ink); }
+  .alert { border: 2px solid var(--edge); background: var(--danger-bg); color: var(--danger-ink); }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #2b2724; --panel: #35302c; --ink: #fff8e6; --muted: #F1DDCF;
+    --line: #a99c91; --edge: #a99c91; --hl: #84B067; --hl-ink: #2b2724; --soft: #4a413b;
+    --danger-bg: #4a413b; --danger-ink: #fff6ed; --player-bg: #35302c;
+    --play-bg: #84B067; --play-ink: #2b2724;
+  }
+  :root[data-theme="light"] { color-scheme: light; }
+  .top-actions { margin-left: auto; display:flex; align-items:center; gap:12px; }
+  #themeToggle { border:2px solid var(--edge); background:var(--panel); color:var(--ink); padding:7px 9px; cursor:pointer; font-size:11px; }
+  .volume-control { display:grid; gap:2px; min-width:110px; font-size:11px; }
+  .volume-control input { width:100%; accent-color:var(--ink); }
+  @media (max-width: 820px) {
+    .top { padding: 0 12px; }
+    .brand { font-size: 13px; }
+    .privacy { font-size: 9px; }
+    .rail { border-right: 2px solid var(--edge); }
+    .player { padding: 8px 12px calc(12px + env(safe-area-inset-bottom, 0px)); grid-template-columns:minmax(0,1fr); grid-template-areas:"status" "scrub" "transport" "opts"; }
+    .transport { justify-content:center; }
+    .opts { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+    .opts label select { width:100%; min-width:0; }
+    .volume-control { display:none; }
+    .top-actions { gap:6px; }
+    .privacy { display:none; }
+    .brand { font-size:11px; }
+    .hero { padding:28px 16px 34px; }
+    .reader { padding:20px 16px 35vh; }
+    .text { font-size:14px; line-height:1.85; }
+    .hero h2 { font-size: clamp(17px,5vw,28px); }
+  }
+
+</style>
+</head>
+<body>
+<header class="top">
+  <h1 class="brand">Lectern</h1>
+  <p class="privacy">Your files stay in this browser tab.</p>
+  <div class="top-actions"><button id="themeToggle" type="button" aria-label="Toggle dark mode">Dark mode</button></div>
+  <button id="toggleRail" class="textbtn" type="button" aria-expanded="false" aria-controls="rail">Sections</button>
+</header>
+
+<main class="shell empty" id="shell">
+  <aside class="rail" id="rail" aria-label="Sections" hidden>
+    <div class="book">
+      <h2 id="bookTitle"></h2>
+      <p id="bookMeta" class="meta"></p>
+    </div>
+    <div class="rail-actions">
+      <button class="textbtn" id="selectAll" type="button">Select all</button>
+      <button class="textbtn" id="selectNone" type="button">Select none</button>
+      <button class="textbtn" id="saveSelected" type="button">Save selected as audio</button>
+      <button class="textbtn" id="replace" type="button">Open another file</button>
+    </div>
+    <ol class="sections" id="sectionList"></ol>
+    <details class="engine">
+      <summary>Speech engine</summary>
+      <p><label>Engine
+        <select id="engine">
+          <option value="auto">Automatic</option>
+          <option value="cpu">CPU only</option>
+        </select></label></p>
+      <p id="engineHint"></p>
+    </details>
+  </aside>
+
+  <section class="stage" id="stage" aria-label="Reader">
+    <div id="alert" class="alert" role="alert" hidden>
+      <span id="alertText"></span>
+      <button id="alertClose" type="button" aria-label="Dismiss message">×</button>
+    </div>
+    <p id="busy" class="busy" role="status" hidden></p>
+
+    <div class="hero" id="hero">
+      <h2>Drop in a book.<br>Hear it read aloud.</h2>
+      <p class="sweep"><span>Your file never leaves this browser tab.</span> <span>A voice model runs on your own device.</span> <span>Press play and follow along, one sentence at a time.</span></p>
+      <div class="cta">
+        <button class="primary" id="choose" type="button">Choose a file</button>
+        <button class="textbtn" id="sample" type="button">Try a sample</button>
+        <button class="textbtn" id="sampleEs" type="button" lang="es">Prueba en español</button>
+      </div>
+      <p class="fine">Works with PDF, EPUB, DOCX, TXT and HTML. Scanned PDFs (pictures of pages) and DRM-protected books can’t be read. Includes English and Spanish voices; voice quality depends on the selected language and voice.</p>
+      <p class="fine">The first time you press play, the voice model downloads (about 90 to 330 MB, depending on your device) and is saved for next time.</p>
+    </div>
+
+    <article class="reader" id="reader" hidden>
+      <p class="readerhead" id="readerHead"></p>
+      <div class="text" id="text"></div>
+    </article>
+  </section>
+</main>
+
+<footer class="player off" id="player">
+  <div class="statusbar">
+    <span id="status" role="status" aria-live="polite"></span>
+    <progress id="load" hidden></progress>
+    <button class="textbtn" id="cancel" type="button" hidden>Cancel</button>
+  </div>
+
+  <div class="transport">
+    <button class="ctl" id="prev" type="button" aria-label="Previous sentence" disabled>
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 5v14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 5.5v13L9.5 12z" fill="currentColor"/></svg>
+    </button>
+    <button class="ctl big" id="play" type="button" aria-label="Play" disabled>
+      <svg class="i-play" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+      <svg class="i-pause" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" hidden><rect x="6" y="5" width="4.5" height="14" rx="1" fill="currentColor"/><rect x="13.5" y="5" width="4.5" height="14" rx="1" fill="currentColor"/></svg>
+    </button>
+    <button class="ctl" id="next" type="button" aria-label="Next sentence" disabled>
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M18 5v14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 5.5v13L14.5 12z" fill="currentColor"/></svg>
+    </button>
+  </div>
+
+  <div class="scrubwrap">
+    <input id="scrub" type="range" min="0" max="0" step="1" value="0" aria-label="Position in the book" disabled>
+    <div class="scrubmeta"><span id="scrubLabel"></span><span id="timeLeft"></span></div>
+  </div>
+
+  <div class="opts">
+    <label>Voice <select id="voice"></select></label>
+    <label>Speed <select id="speed"></select></label>
+    <label class="volume-control" id="volumeControl">Volume <input id="volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Playback volume"><span id="volumeValue">100%</span></label>
+  </div>
+</footer>
+
+<input id="file" type="file" accept=".pdf,.epub,.docx,.txt,.md,.markdown,.html,.htm" hidden>
+
+<script>
+  // ES modules don't load from file:// URLs, so explain how to open the page.
+  if (location.protocol === 'file:') {
+    document.addEventListener('DOMContentLoaded', function () {
+      var warn = document.createElement('p');
+      warn.id = 'fileWarn';
+      warn.textContent = 'This page has to be served over http. Run "npx serve" or "python -m http.server" in this folder and open the address it prints. See the README.';
+      document.querySelector('.stage').prepend(warn);
+    });
+  }
+</script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
