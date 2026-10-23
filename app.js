@@ -112,6 +112,10 @@ const state = {
 
 let statusOverride = ''; // model download / export messages
 let hasWebGPU = false;
+const IS_MOBILE =
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  !!navigator.userAgentData?.mobile ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPad in desktop mode
 
 /* ------------------------------------------------------------------ */
 /* Elements                                                            */
@@ -512,7 +516,10 @@ async function loadModel() {
   el.load.removeAttribute('value');
   try {
     const attempts = [];
-    if (state.engine === 'auto' && hasWebGPU) attempts.push({ device: 'webgpu', dtype: 'fp32', label: 'GPU' });
+    // Phones run out of memory with the 330 MB fp32 GPU model (the tab is killed, which no
+    // try/catch can catch), so 'auto' means CPU on mobile. 'gpu' forces WebGPU anywhere.
+    const useGPU = hasWebGPU && (state.engine === 'gpu' || (state.engine === 'auto' && !IS_MOBILE));
+    if (useGPU) attempts.push({ device: 'webgpu', dtype: 'fp32', label: 'GPU' });
     attempts.push({ device: 'wasm', dtype: 'q8', label: 'CPU' });
     // One extra CPU try covers a flaky mobile connection dropping the runtime download.
     attempts.push({ device: 'wasm', dtype: 'q8', label: 'CPU' });
@@ -531,6 +538,7 @@ async function loadModel() {
             wasm: `${ORT_BASE}ort-wasm-simd-threaded.jsep.wasm`,
           };
         }
+        if (IS_MOBILE && opt.device === 'wasm') env.backends.onnx.wasm.numThreads = 1; // less RAM on phones
         const files = new Map();
         const model = await KokoroTTS.from_pretrained(MODEL_ID, {
           dtype: opt.dtype,
@@ -921,9 +929,11 @@ if (el.themeToggle) {
 
 detectWebGPU().then((ok) => {
   hasWebGPU = ok;
-  el.engineHint.textContent = ok
-    ? 'Automatic uses your GPU when it can: fastest, with a one-time download of about 330 MB. CPU is a lighter download of about 90 MB but slower.'
-    : "This browser doesn't offer WebGPU, so the CPU engine will be used (about 90 MB, downloaded once).";
+  el.engineHint.textContent = !ok
+    ? "This browser doesn't offer WebGPU, so the CPU engine will be used (about 90 MB, downloaded once)."
+    : IS_MOBILE
+      ? 'On phones, Automatic uses the CPU engine (about 90 MB, slower but stable). GPU needs about 330 MB plus a lot of RAM and can crash the tab.'
+      : 'Automatic uses your GPU when it can: fastest, with a one-time download of about 330 MB. CPU is a lighter download of about 90 MB but slower.';
 });
 
 /* ------------------------------------------------------------------ */
