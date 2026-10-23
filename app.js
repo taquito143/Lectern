@@ -525,6 +525,7 @@ async function loadModel() {
     attempts.push({ device: 'wasm', dtype: 'q8', label: 'CPU' });
 
     let lastError;
+    const errors = [];
     for (const [i, opt] of attempts.entries()) {
       const n = loadCount++;
       try {
@@ -533,14 +534,18 @@ async function loadModel() {
         // So every retry gets a fresh copy of kokoro-js and cache-busted runtime URLs.
         const { KokoroTTS, env } = await import(n ? `${KOKORO_URL}?attempt=${n}` : KOKORO_URL);
         if (n) {
-          env.wasmPaths = {
-            mjs: `${ORT_BASE}ort-wasm-simd-threaded.jsep.mjs?attempt=${n}-${Date.now()}`,
-            wasm: `${ORT_BASE}ort-wasm-simd-threaded.jsep.wasm`,
-          };
+          // kokoro-js's `env` is a thin wrapper whose setter throws "reading 'onnx'" when the
+          // runtime isn't initialised yet. That error used to mask the real first failure,
+          // so a failed cache-bust is ignored rather than allowed to abort the retry.
+          try {
+            env.wasmPaths = {
+              mjs: `${ORT_BASE}ort-wasm-simd-threaded.jsep.mjs?attempt=${n}-${Date.now()}`,
+              wasm: `${ORT_BASE}ort-wasm-simd-threaded.jsep.wasm`,
+            };
+          } catch (e) {
+            console.warn('Could not set wasmPaths', e);
+          }
         }
-        // Fewer threads = less RAM on phones. Optional: some builds don't expose env.backends.
-        const ortWasm = env?.backends?.onnx?.wasm;
-        if (IS_MOBILE && opt.device === 'wasm' && ortWasm) ortWasm.numThreads = 1;
         const files = new Map();
         const model = await KokoroTTS.from_pretrained(MODEL_ID, {
           dtype: opt.dtype,
@@ -567,11 +572,12 @@ async function loadModel() {
         return tts;
       } catch (err) {
         lastError = err;
+        errors.push(`${opt.label}: ${err?.message || err}`);
         console.warn(`Engine ${opt.label} failed`, err);
         setOverride(i < attempts.length - 1 ? `${opt.label} engine failed. Trying the CPU engine…` : '');
       }
     }
-    throw new Error(`The voice model could not start. ${lastError?.message || 'Check your connection and try again.'}`);
+    throw new Error(`The voice model could not start. ${errors.length ? errors.join(' | ') : lastError?.message || 'Check your connection and try again.'}`);
   } finally {
     el.load.hidden = true;
     setOverride('');
