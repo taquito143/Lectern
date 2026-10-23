@@ -538,7 +538,9 @@ async function loadModel() {
             wasm: `${ORT_BASE}ort-wasm-simd-threaded.jsep.wasm`,
           };
         }
-        if (IS_MOBILE && opt.device === 'wasm') env.backends.onnx.wasm.numThreads = 1; // less RAM on phones
+        // Fewer threads = less RAM on phones. Optional: some builds don't expose env.backends.
+        const ortWasm = env?.backends?.onnx?.wasm;
+        if (IS_MOBILE && opt.device === 'wasm' && ortWasm) ortWasm.numThreads = 1;
         const files = new Map();
         const model = await KokoroTTS.from_pretrained(MODEL_ID, {
           dtype: opt.dtype,
