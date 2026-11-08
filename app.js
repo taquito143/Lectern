@@ -155,6 +155,7 @@ const el = {
   volume: $('volume'),
   volumeValue: $('volumeValue'),
   themeToggle: $('themeToggle'),
+  accentToggle: $('accentToggle'),
 };
 
 /* ------------------------------------------------------------------ */
@@ -934,18 +935,35 @@ if (el.volume) {
     if (masterGain && ctx) masterGain.gain.setTargetAtTime(value, ctx.currentTime, 0.015);
   });
 }
-const savedTheme = store.get('theme', 'light');
-document.documentElement.dataset.theme = savedTheme;
-if (el.themeToggle) {
-  const updateThemeLabel = () => { el.themeToggle.textContent = document.documentElement.dataset.theme === 'dark' ? 'Light mode' : 'Dark mode'; };
-  updateThemeLabel();
-  el.themeToggle.addEventListener('click', () => {
-    const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = theme;
-    store.set('theme', theme);
-    updateThemeLabel();
-  });
+// Theme: follows the device (system) unless set to light or dark. Accent: the
+// operating system's accent color where the browser exposes it, or acid lime.
+const THEMES = ['system', 'light', 'dark'];
+const THEME_LABEL = { system: 'Theme: auto', light: 'Theme: light', dark: 'Theme: dark' };
+function applyTheme(theme) {
+  if (theme === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  if (el.themeToggle) el.themeToggle.textContent = THEME_LABEL[theme];
 }
+let theme = store.get('theme', 'system');
+if (!THEMES.includes(theme)) theme = 'system';
+applyTheme(theme);
+el.themeToggle?.addEventListener('click', () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  store.set('theme', theme);
+  applyTheme(theme);
+});
+
+let accentMode = store.get('accentMode', 'system');
+function applyAccent() {
+  document.documentElement.dataset.accent = accentMode;
+  if (el.accentToggle) el.accentToggle.textContent = accentMode === 'system' ? 'Accent: system' : 'Accent: lime';
+}
+applyAccent();
+el.accentToggle?.addEventListener('click', () => {
+  accentMode = accentMode === 'system' ? 'lime' : 'system';
+  store.set('accentMode', accentMode);
+  applyAccent();
+});
 
 detectWebGPU().then((ok) => {
   hasWebGPU = ok;

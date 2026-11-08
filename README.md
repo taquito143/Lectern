@@ -79,7 +79,10 @@ and headphone controls. See [`android/README.md`](android/README.md) to build it
 - Voices: edit the `VOICES` list in `app.js` (ids come from Kokoro's voice list).
 - Pause lengths between sentences and paragraphs: `GAP_SENTENCE` and
   `GAP_PARAGRAPH` in `app.js`.
-- Colors and fonts: the CSS variables at the top of `index.html`.
+- Colors and fonts: the "Terminal Void Audio" skin at the end of the `<style>` in
+  `index.html` (light and dark variables, same design as the Android app). The
+  theme follows the device unless set with the Theme button; the accent uses the
+  system accent color where the browser supports `AccentColor`, otherwise lime.
 
 ## Credits
 
