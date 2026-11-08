@@ -11,6 +11,7 @@ runs in the browser: text extraction and speech (Kokoro, 82M parameters, via
 | `index.html` | Page, styles and layout |
 | `app.js` | UI, model loading, audio playback queue, saving audio |
 | `parsers.js` | PDF / EPUB / DOCX / TXT / HTML to sections, then to sentences |
+| `spanish.js` | Spanish text to IPA phonemes for Kokoro's Spanish voices |
 
 ## Run it on your PC
 
@@ -54,11 +55,23 @@ Pages, GitHub Pages or Vercel. No build step, no environment variables.
 
 - Scanned PDFs (images of pages) have no text. They need OCR first.
 - DRM-protected EPUBs (Kindle, Kobo, Adobe DRM) cannot be read.
-- Kokoro in the browser is English-only here. Other languages will sound wrong.
+- English and Spanish only. kokoro-js only phonemizes English, so Spanish text is
+  turned into phonemes by `spanish.js` (rules; Latin American, Río de la Plata or
+  Spain accent, chosen next to the voice; reads money, dates, times and ordinals) and sent
+  to the model with `generate_from_ids`. Spanish voices (Dora, Alex, Santa) are
+  rated lower than the English ones. A Spanish book switches to a Spanish voice
+  automatically.
 - On a slow CPU, generation can be slower than playback and you will hear pauses.
   The status line shows the current speed. WebGPU or saving audio first fixes this.
 - Multi-column PDFs and tables are read in the order the PDF stores them, which
   is not always the visual order.
+
+## Android app
+
+A native Android version (Kotlin, Jetpack Compose) is in [`android/`](android/). It
+reads with the phone's own voice by default (instant, any installed language) or
+with Kokoro on the phone, keeps reading with the screen off, and has lock-screen
+and headphone controls. See [`android/README.md`](android/README.md) to build it.
 
 ## Changing things
 

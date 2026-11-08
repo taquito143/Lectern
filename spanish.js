@@ -3,7 +3,15 @@
 // kokoro-js only ships an English phonemizer, so Spanish is converted here. Spanish
 // spelling maps almost one to one onto sounds, so a rule set covers it well. The
 // output follows the eSpeak NG "es" style the Spanish voices were trained on:
-// Castilian θ for c/z, lenited β ð ɣ between vowels, ˈ before the stressed vowel.
+// lenited β ð ɣ between vowels, ˈ before the stressed vowel. The accent decides
+// c/z (s, or θ in Spain) and ll/y (ʝ, ʃ in Río de la Plata, ʎ in Spain).
+
+/** 'latam' (default), 'rioplatense' or 'spain'. */
+let accent = 'latam';
+export function setSpanishAccent(a) { accent = ['latam', 'rioplatense', 'spain'].includes(a) ? a : 'latam'; }
+const ceta = () => (accent === 'spain' ? 'θ' : 's');
+const elle = () => ({ spain: 'ʎ', rioplatense: 'ʃ' }[accent] || 'ʝ');
+const yConsonant = () => (accent === 'rioplatense' ? 'ʃ' : 'ʝ');
 
 /* ------------------------------------------------------------------ */
 /* Numbers and abbreviations                                           */
@@ -59,12 +67,60 @@ const ABBREVIATIONS = [
   [/\bSr\./g, 'señor'], [/\bSra\./g, 'señora'], [/\bSrta\./g, 'señorita'],
   [/\bDr\./g, 'doctor'], [/\bDra\./g, 'doctora'], [/\bUd\./g, 'usted'], [/\bUds\./g, 'ustedes'],
   [/\bD\.(?= [A-ZÁÉÍÓÚÑ])/g, 'don'], [/\bDña\./g, 'doña'], [/\bpág\./gi, 'página'],
-  [/\betc\./gi, 'etcétera'], [/\bnº\s?/gi, 'número '], [/%/g, ' por ciento'],
+  [/\betc\./gi, 'etcétera'], [/\bn[º°]\s?/gi, 'número '],
+  [/\bdepto\./gi, 'departamento'], [/\bdpto\./gi, 'departamento'], [/\bAv\./g, 'avenida'],
+  [/\bTel\./gi, 'teléfono'], [/\bhs\.?(?=\s|$)/g, 'horas'], [/\bU\.\s?F\./g, 'unidad funcional'],
+  [/\bs\/n\b/gi, 'sin número'], [/\bEE\.\s?UU\./g, 'Estados Unidos'],
+  [/@/g, ' arroba '], [/%/g, ' por ciento'],
 ];
+
+const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const ORDINALS = ['', 'primero', 'segundo', 'tercero', 'cuarto', 'quinto', 'sexto', 'séptimo', 'octavo', 'noveno', 'décimo'];
+
+// "102.026,50" or "1,500.75" -> [whole, cents]
+function parseAmount(a) {
+  const m = /^(\d{1,3}(?:[.,]\d{3})*|\d+)(?:[.,](\d{1,2}))?$/.exec(a);
+  if (!m) return null;
+  return [Number(m[1].replace(/[.,]/g, '')), m[2] ? Number(m[2].padEnd(2, '0')) : 0];
+}
+
+function money(whole, cents, one, many) {
+  const w = whole === 1 ? `un ${one}` : `${apocope(numberToWords(whole))} ${many}`;
+  return cents ? `${w} con ${numberToWords(cents)} centavos` : w;
+}
+
+// Money, dates, times and ordinals, before plain numbers are read.
+function expandSpecial(t) {
+  // $ 102.026,50 -> ciento dos mil veintiséis pesos con cincuenta centavos
+  t = t.replace(/(US\$|U\$S|USD|u\$s|\$|€)\s?(\d[\d.,]*\d|\d)/g, (m, cur, amount) => {
+    const parsed = parseAmount(amount);
+    if (!parsed) return m;
+    if (cur === '€') return money(...parsed, 'euro', 'euros');
+    if (cur === '$') return money(...parsed, 'peso', 'pesos');
+    return money(...parsed, 'dólar', 'dólares');
+  });
+  // 11/09/2026 -> once de septiembre de dos mil veintiséis
+  t = t.replace(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4}|\d{2})\b/g, (m, d, mo, y) => {
+    d = Number(d); mo = Number(mo); let year = Number(y);
+    if (y.length === 2) year += 2000;
+    if (d < 1 || d > 31 || mo < 1 || mo > 12) return m;
+    return `${d === 1 ? 'primero' : numberToWords(d)} de ${MONTHS[mo - 1]} de ${numberToWords(year)}`;
+  });
+  // 10:30 -> diez y treinta
+  t = t.replace(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g, (_, h, mi) => (Number(mi) ? `${numberToWords(Number(h))} y ${numberToWords(Number(mi))}` : numberToWords(Number(h))));
+  // 3º piso, 1ª vez
+  t = t.replace(/\b(\d{1,2})\s?([º°ª])/g, (_, n, mark) => {
+    const w = ORDINALS[Number(n)];
+    if (!w) return numberToWords(Number(n));
+    return mark === 'ª' ? w.slice(0, -1) + 'a' : w;
+  });
+  return t;
+}
 
 function normalize(text) {
   let t = text.normalize('NFC');
   for (const [re, word] of ABBREVIATIONS) t = t.replace(re, word);
+  t = expandSpecial(t);
   // Roman numerals after words that usually take them: "capítulo IV", "siglo XX"
   t = t.replace(/\b(cap[ií]tulo|parte|libro|tomo|siglo|acto|escena)\s+([IVXLCDM]+)\b/gi, (_, w, r) => `${w} ${numberToWords(romanToNumber(r.toUpperCase()))}`);
   t = t.replace(/\b\d{1,3}(?:\.\d{3})+\b/g, (m) => m.replace(/\./g, '')); // 1.000.000
@@ -109,10 +165,10 @@ function segment(word) {
       // vowel when alone or at the end after a vowel (y, hoy, rey, muy); consonant otherwise
       if (w.length === 1) push('i', { v: true, weak: true });
       else if (i === w.length - 1 && isVowelLetter(w[i - 1])) push('i', { v: true, weak: true, final: true });
-      else push('ʝ');
+      else push(yConsonant());
     } else if (c === 'c') {
       if (n === 'h') { push('ʧ'); i++; }
-      else push(FRONT(n) ? 'θ' : 'k');
+      else push(FRONT(n) ? ceta() : 'k');
     } else if (c === 'q') {
       push('k');
       if (n === 'u') i++;
@@ -120,7 +176,7 @@ function segment(word) {
       if (n === 'u' && FRONT(w[i + 2])) { push('ɡ'); i++; }
       else push(FRONT(n) ? 'x' : 'ɡ');
     } else if (c === 'l') {
-      if (n === 'l') { push('ʎ'); i++; }
+      if (n === 'l') { push(elle()); i++; }
       else push('l');
     } else if (c === 'r') {
       if (n === 'r') { push('r'); i++; }
@@ -131,7 +187,7 @@ function segment(word) {
       else { push('k'); push('s'); }
     } else if (c === 'h') { /* silent */ }
     else if (c === 'j') push('x');
-    else if (c === 'z') push('θ');
+    else if (c === 'z') push(ceta());
     else if (c === 'v' || c === 'b') push('b');
     else if (c === 'ñ') push('ɲ');
     else if (c === 'w') push('w');

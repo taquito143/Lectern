@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pixel-art open book with a sound wave, on a 108x108 adaptive icon canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- pages -->
+    <path android:fillColor="#FFF8E6" android:pathData="M30,40h22v32h-22z M56,40h22v32h-22z" />
+    <!-- spine and outline -->
+    <path android:fillColor="#3B3531" android:pathData="M52,38h4v36h-4z M28,38h24v2h-24z M56,38h24v2h-24z M28,72h24v2h-24z M56,72h24v2h-24z M28,40h2v32h-2z M78,40h2v32h-2z" />
+    <!-- text lines -->
+    <path android:fillColor="#A99C91" android:pathData="M34,46h14v2h-14z M34,52h14v2h-14z M34,58h10v2h-10z M60,46h14v2h-14z M60,52h14v2h-14z M60,58h10v2h-10z" />
+</vector>

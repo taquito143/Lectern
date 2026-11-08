@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="lectern_lime">#C3F400</color>
+    <color name="lectern_void">#F4F5EF</color>
+    <style name="Theme.Lectern" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/lectern_void</item>
+        <item name="android:statusBarColor">@color/lectern_void</item>
+        <item name="android:navigationBarColor">@color/lectern_void</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

@@ -4,7 +4,7 @@
 // device) -> Web Audio queue that plays while the next sentences are generated.
 
 import { parseFile, splitIntoUnits, countWords, formatDuration, WORDS_PER_MINUTE } from './parsers.js';
-import { phonemizeSpanish, looksSpanish } from './spanish.js';
+import { phonemizeSpanish, looksSpanish, setSpanishAccent } from './spanish.js';
 
 /* ------------------------------------------------------------------ */
 /* Config. Versions are pinned so a CDN update can't break the app.    */
@@ -122,6 +122,8 @@ const IS_MOBILE =
 /* ------------------------------------------------------------------ */
 
 const el = {
+  accent: $('accent'),
+  accentControl: $('accentControl'),
   shell: $('shell'),
   fileInput: $('file'),
   busy: $('busy'),
@@ -216,6 +218,8 @@ function setVoice(id) {
   el.voice.value = id;
   store.set('voice', id);
   store.set('voice:' + (isSpanishVoice(id) ? 'es' : 'en'), id);
+  // The accent only applies to Spanish voices.
+  el.accentControl.hidden = !isSpanishVoice(id);
 }
 
 function loadBook(book, key) {
@@ -887,6 +891,14 @@ for (const [group, voices] of VOICES) {
   el.voice.append(og);
 }
 el.voice.value = state.voice;
+el.accent.value = store.get('accent', 'latam');
+setSpanishAccent(el.accent.value);
+el.accentControl.hidden = !isSpanishVoice(state.voice);
+el.accent.addEventListener('change', () => {
+  setSpanishAccent(el.accent.value);
+  store.set('accent', el.accent.value);
+  if (isSpanishVoice(state.voice)) regenerateUpcoming();
+});
 for (const s of SPEEDS) el.speed.append(new Option(`${s}×`, s));
 el.speed.value = String(state.speed);
 el.engine.value = state.engine;
