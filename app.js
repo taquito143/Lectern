@@ -1,36 +1,38 @@
 // app.js: Lectern. Upload a book, hear it read aloud, all in the browser.
 //
-// Flow: file -> parseFile() -> sections of sentences -> Kokoro TTS (on this
-// device) -> Web Audio queue that plays while the next sentences are generated.
+// Flow: file -> parseFile() -> sections of sentences -> phonemes (english.js /
+// spanish.js) -> KittenTTS 2 nano (on this device, kitten.js) -> Web Audio queue
+// that plays while the next sentences are generated.
 
 import { parseFile, splitIntoUnits, countWords, formatDuration, WORDS_PER_MINUTE } from './parsers.js';
 import { phonemizeSpanish, looksSpanish, setSpanishAccent } from './spanish.js';
+import { loadEnglish, phonemizeEnglish } from './english.js';
+import { Kitten, fetchBytes, SAMPLE_RATE } from './kitten.js';
 
 /* ------------------------------------------------------------------ */
 /* Config. Versions are pinned so a CDN update can't break the app.    */
 /* ------------------------------------------------------------------ */
 
-const KOKORO_URL = 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js';
 const PDFJS_BASE = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/';
 const JSZIP_URL = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm';
-const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
-// ONNX Runtime files that kokoro-js loads at runtime (must match its bundled transformers version).
-const ORT_BASE = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/';
 
 const LOOKAHEAD_SECONDS = 40; // how far ahead of the playhead to keep audio generated
 const GAP_SENTENCE = 0.06; // seconds of silence between sentences
 const GAP_PARAGRAPH = 0.45; // ...and between paragraphs
 
+// KittenTTS 2 nano voices, as "language:key" (keys from the model's config.json).
 const VOICES = [
-  ['Spanish', [['ef_dora', 'Dora'], ['em_alex', 'Alex'], ['em_santa', 'Santa']]],
-  ['American English, female', [['af_heart', 'Heart'], ['af_bella', 'Bella'], ['af_nicole', 'Nicole'], ['af_sarah', 'Sarah'], ['af_sky', 'Sky'], ['af_nova', 'Nova'], ['af_aoede', 'Aoede'], ['af_kore', 'Kore'], ['af_alloy', 'Alloy'], ['af_jessica', 'Jessica'], ['af_river', 'River']]],
-  ['American English, male', [['am_adam', 'Adam'], ['am_michael', 'Michael'], ['am_fenrir', 'Fenrir'], ['am_puck', 'Puck'], ['am_echo', 'Echo'], ['am_eric', 'Eric'], ['am_liam', 'Liam'], ['am_onyx', 'Onyx']]],
-  ['British English, female', [['bf_emma', 'Emma'], ['bf_isabella', 'Isabella'], ['bf_alice', 'Alice'], ['bf_lily', 'Lily']]],
-  ['British English, male', [['bm_george', 'George'], ['bm_lewis', 'Lewis'], ['bm_daniel', 'Daniel'], ['bm_fable', 'Fable']]],
+  ['Spanish', [['es:sofia', 'Sofia'], ['es:elena', 'Elena'], ['es:pablo', 'Pablo'], ['es:mateo', 'Mateo']]],
+  ['English, female', [['en:eleanor', 'Eleanor'], ['en:martha', 'Martha'], ['en:serena', 'Serena'], ['en:iris', 'Iris'], ['en:grace', 'Grace'], ['en:edith', 'Edith']]],
+  ['English, male', [['en:otis', 'Otis'], ['en:vincent', 'Vincent'], ['en:max', 'Max'], ['en:danny', 'Danny']]],
 ];
+const VOICE_IDS = new Set(VOICES.flatMap(([, vs]) => vs.map(([id]) => id)));
 const SPEEDS = [0.8, 0.9, 1, 1.1, 1.25, 1.5];
-const isSpanishVoice = (id) => id.startsWith('e');
-const DEFAULT_VOICE = { en: 'af_heart', es: 'ef_dora' };
+const isSpanishVoice = (id) => id.startsWith('es:');
+const voiceLang = (id = state.voice) => (isSpanishVoice(id) ? 'es' : 'en');
+const DEFAULT_VOICE = { en: 'en:eleanor', es: 'es:sofia' };
+// Voices saved by the Kokoro version of the app map to a default of the same language.
+const knownVoice = (id, fallback) => (VOICE_IDS.has(id) ? id : typeof id === 'string' && /^e[fm]_/.test(id) ? DEFAULT_VOICE.es : fallback);
 
 // Public domain (Miguel de Cervantes, 1605)
 const SAMPLE_TEXT_ES = `Capítulo I
@@ -105,17 +107,12 @@ const state = {
   wordPrefix: [0], // cumulative words along the playlist, for "time left"
   pos: 0, // playlist index of the sentence being heard
   status: 'idle', // idle | playing | paused | done
-  voice: store.get('voice', 'af_heart'),
+  voice: knownVoice(store.get('voice', DEFAULT_VOICE.en), DEFAULT_VOICE.en),
   speed: store.get('speed', 1),
   engine: store.get('engine', 'auto'), // auto | cpu
 };
 
 let statusOverride = ''; // model download / export messages
-let hasWebGPU = false;
-const IS_MOBILE =
-  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-  !!navigator.userAgentData?.mobile ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPad in desktop mode
 
 /* ------------------------------------------------------------------ */
 /* Elements                                                            */
@@ -211,7 +208,7 @@ function matchVoiceToBook(book) {
   const lang = looksSpanish(sample) ? 'es' : 'en';
   const voiceLang = isSpanishVoice(state.voice) ? 'es' : 'en';
   if (lang === voiceLang) return;
-  setVoice(store.get('voice:' + lang, DEFAULT_VOICE[lang]));
+  setVoice(knownVoice(store.get('voice:' + lang, DEFAULT_VOICE[lang]), DEFAULT_VOICE[lang]));
 }
 
 function setVoice(id) {
@@ -489,8 +486,7 @@ el.scrub.addEventListener('change', () => {
 /* Model                                                               */
 /* ------------------------------------------------------------------ */
 
-let tts = null;
-let ttsInfo = null;
+let tts = null; // the Kitten engine; it holds one model per language
 let loadPromise = null;
 
 async function detectWebGPU() {
@@ -500,108 +496,63 @@ async function detectWebGPU() {
     return false;
   }
 }
+const webGPUReady = detectWebGPU();
 
-function ensureModel() {
-  if (tts) return Promise.resolve(tts);
+// Resolves once the model for `lang` (default: the current voice's) is ready.
+function ensureModel(lang = voiceLang()) {
+  if (tts?.langs.has(lang)) return Promise.resolve(tts);
   if (!loadPromise) {
-    loadPromise = loadModel().finally(() => {
+    loadPromise = loadModel(lang).finally(() => {
       loadPromise = null;
       renderControls();
     });
     renderControls();
   }
-  return loadPromise;
+  // Another language may have been loading; then load this one after it.
+  return loadPromise.then(() => (tts.langs.has(lang) ? tts : ensureModel(lang)));
 }
 
-let loadCount = 0; // every load after the first needs fresh module copies (see below)
-
-async function loadModel() {
-  setOverride('Loading the voice model…');
+async function loadModel(lang) {
+  const name = lang === 'es' ? 'Spanish' : 'English';
+  setOverride(`Loading the ${name} voice model…`);
   el.load.hidden = false;
   el.load.removeAttribute('value');
   try {
-    const attempts = [];
-    // Phones run out of memory with the 330 MB fp32 GPU model (the tab is killed, which no
-    // try/catch can catch), so 'auto' means CPU on mobile. 'gpu' forces WebGPU anywhere.
-    const useGPU = hasWebGPU && (state.engine === 'gpu' || (state.engine === 'auto' && !IS_MOBILE));
-    if (useGPU) attempts.push({ device: 'webgpu', dtype: 'fp32', label: 'GPU' });
-    attempts.push({ device: 'wasm', dtype: 'q8', label: 'CPU' });
-    // One extra CPU try covers a flaky mobile connection dropping the runtime download.
-    attempts.push({ device: 'wasm', dtype: 'q8', label: 'CPU' });
-
-    let lastError;
-    const errors = [];
-    for (const [i, opt] of attempts.entries()) {
-      const n = loadCount++;
-      try {
-        // A failed load poisons the module for the rest of the page: transformers.js reuses
-        // the first rejected session, and the browser caches the failed runtime import.
-        // So every retry gets a fresh copy of kokoro-js and cache-busted runtime URLs.
-        const { KokoroTTS, env } = await import(n ? `${KOKORO_URL}?attempt=${n}` : KOKORO_URL);
-        if (n) {
-          // kokoro-js's `env` is a thin wrapper whose setter throws "reading 'onnx'" when the
-          // runtime isn't initialised yet. That error used to mask the real first failure,
-          // so a failed cache-bust is ignored rather than allowed to abort the retry.
-          try {
-            env.wasmPaths = {
-              mjs: `${ORT_BASE}ort-wasm-simd-threaded.jsep.mjs?attempt=${n}-${Date.now()}`,
-              wasm: `${ORT_BASE}ort-wasm-simd-threaded.jsep.wasm`,
-            };
-          } catch (e) {
-            console.warn('Could not set wasmPaths', e);
-          }
-        }
-        const files = new Map();
-        const model = await KokoroTTS.from_pretrained(MODEL_ID, {
-          dtype: opt.dtype,
-          device: opt.device,
-          progress_callback: (p) => {
-            if (p.status !== 'progress' || !p.total) return;
-            files.set(p.file, { loaded: p.loaded, total: p.total });
-            let loaded = 0;
-            let total = 0;
-            for (const f of files.values()) {
-              loaded += f.loaded;
-              total += f.total;
-            }
-            el.load.max = total;
-            el.load.value = loaded;
-            setOverride(
-              `Downloading the voice model (${opt.label}): ${Math.round((loaded / total) * 100)}% of ${Math.round(total / 1e6)} MB. This only happens once.`
-            );
-          },
-        });
-        await speak(model, isSpanishVoice(state.voice) ? 'Listo.' : 'Ready.');
-        tts = model;
-        ttsInfo = opt;
-        return tts;
-      } catch (err) {
-        lastError = err;
-        errors.push(`${opt.label}: ${err?.message || err}`);
-        console.warn(`Engine ${opt.label} failed`, err);
-        setOverride(i < attempts.length - 1 ? `${opt.label} engine failed. Trying the CPU engine…` : '');
-      }
-    }
-    throw new Error(`The voice model could not start. ${errors.length ? errors.join(' | ') : lastError?.message || 'Check your connection and try again.'}`);
+    tts ||= new Kitten({ device: state.engine, hasWebGPU: await webGPUReady, JSZip: await libs.JSZip() });
+    await Promise.all([
+      lang === 'en' ? loadEnglish((url) => fetchBytes(url)) : null,
+      tts.load(lang, (loaded, total) => {
+        el.load.max = total;
+        el.load.value = loaded;
+        setOverride(
+          `Downloading the ${name} voice model: ${Math.round((loaded / total) * 100)}% of ${Math.round(total / 1e6)} MB. This only happens once.`
+        );
+      }),
+    ]);
+    setOverride(`Starting the ${name} voice…`);
+    return tts;
+  } catch (err) {
+    console.warn('Voice model failed', err);
+    throw new Error(`The voice model could not start. ${err?.message || 'Check your connection and try again.'}`);
   } finally {
     el.load.hidden = true;
     setOverride('');
   }
 }
 
-// kokoro-js only knows English voices and phonemes, so Spanish text is phonemized
-// here and handed to the model as token ids (generate_from_ids skips the voice check).
-function speak(model, text) {
-  const opts = { voice: state.voice, speed: state.speed };
-  if (!isSpanishVoice(state.voice)) return model.generate(text, opts);
-  const { input_ids } = model.tokenizer(phonemizeSpanish(text), { truncation: true });
-  return model.generate_from_ids(input_ids, opts);
+// Text -> phonemes in the model's alphabet -> audio.
+async function speak(text) {
+  const [lang, voice] = state.voice.split(':');
+  await ensureModel(lang);
+  const phonemes = lang === 'es' ? phonemizeSpanish(text) : await phonemizeEnglish(text);
+  const audio = await tts.generate(phonemes, { lang, voice, speed: state.speed });
+  return { audio, sampling_rate: SAMPLE_RATE };
 }
 
 // ONNX sessions can't run two inferences at once, so every call goes through one chain.
 let chain = Promise.resolve();
 function synth(text) {
-  const run = chain.then(() => speak(tts, text));
+  const run = chain.then(() => speak(text));
   chain = run.catch(() => {});
   return run;
 }
@@ -642,7 +593,7 @@ async function playAt(idx) {
   clearAlert();
   const target = clamp(idx, 0, state.playlist.length - 1);
   setActive(target);
-  if (!tts) {
+  if (!tts?.langs.has(voiceLang())) {
     stopSources();
     state.status = 'idle';
     renderControls();
@@ -868,7 +819,7 @@ function refreshStatus() {
       if (starving) text = scheduled.length ? 'Buffering…' : 'Preparing the first sentence…';
       else if (genRate && genRate < 1.2)
         text = `This device generates speech at ${genRate.toFixed(1)}× playback speed, so expect pauses. A browser with WebGPU, or saving audio first, will help.`;
-      else if (genRate) text = `Generating ${genRate.toFixed(1)}× faster than playback${ttsInfo ? ` (${ttsInfo.label})` : ''}`;
+      else if (genRate) text = `Generating ${genRate.toFixed(1)}× faster than playback${tts ? ` (${tts.label(voiceLang())})` : ''}`;
     }
   }
   el.status.textContent = text;
@@ -919,7 +870,6 @@ el.engine.addEventListener('change', () => {
   store.set('engine', state.engine);
   stopAll();
   tts = null;
-  ttsInfo = null;
   genRate = 0;
 });
 
@@ -965,13 +915,10 @@ el.accentToggle?.addEventListener('click', () => {
   applyAccent();
 });
 
-detectWebGPU().then((ok) => {
-  hasWebGPU = ok;
-  el.engineHint.textContent = !ok
-    ? "This browser doesn't offer WebGPU, so the CPU engine will be used (about 90 MB, downloaded once)."
-    : IS_MOBILE
-      ? 'On phones, Automatic uses the CPU engine (about 90 MB, slower but stable). GPU needs about 330 MB plus a lot of RAM and can crash the tab.'
-      : 'Automatic uses your GPU when it can: fastest, with a one-time download of about 330 MB. CPU is a lighter download of about 90 MB but slower.';
+webGPUReady.then((ok) => {
+  el.engineHint.textContent = ok
+    ? 'Automatic uses your GPU through WebGPU, which is much faster, and falls back to the CPU if the GPU fails. The model is the same small download either way (about 20 MB per language).'
+    : "This browser doesn't offer WebGPU, so speech is generated on the CPU, which can be slower than playback on older devices.";
 });
 
 /* ------------------------------------------------------------------ */

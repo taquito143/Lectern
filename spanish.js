@@ -1,8 +1,7 @@
-// spanish.js: Spanish text -> IPA phonemes for Kokoro's Spanish voices.
+// spanish.js: Spanish text -> IPA phonemes for KittenTTS's Spanish model.
 //
-// kokoro-js only ships an English phonemizer, so Spanish is converted here. Spanish
-// spelling maps almost one to one onto sounds, so a rule set covers it well. The
-// output follows the eSpeak NG "es" style the Spanish voices were trained on:
+// Spanish spelling maps almost one to one onto sounds, so a rule set covers it
+// well. The output follows the eSpeak NG "es" style the model was trained on:
 // lenited β ð ɣ between vowels, ˈ before the stressed vowel. The accent decides
 // c/z (s, or θ in Spain) and ll/y (ʝ, ʃ in Río de la Plata, ʎ in Spain).
 

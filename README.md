@@ -1,8 +1,9 @@
 # Lectern
 
 Upload a PDF, EPUB, DOCX, TXT or HTML file and listen to it read aloud. Everything
-runs in the browser: text extraction and speech (Kokoro, 82M parameters, via
-`kokoro-js`). There is no server and nothing is uploaded.
+runs in the browser: text extraction and speech ([KittenTTS 2 nano](https://github.com/KittenML/KittenTTS),
+17M parameters per language, on ONNX Runtime Web). There is no server and nothing
+is uploaded.
 
 ## Files
 
@@ -10,8 +11,11 @@ runs in the browser: text extraction and speech (Kokoro, 82M parameters, via
 | --- | --- |
 | `index.html` | Page, styles and layout |
 | `app.js` | UI, model loading, audio playback queue, saving audio |
+| `kitten.js` | Runs KittenTTS 2 nano: downloads and caches the model, voice packs, synthesis |
+| `english.js` | English text to misaki phonemes (the alphabet KittenTTS was trained on) |
+| `spanish.js` | Spanish text to IPA phonemes, in the eSpeak NG style KittenTTS's Spanish model was trained on |
 | `parsers.js` | PDF / EPUB / DOCX / TXT / HTML to sections, then to sentences |
-| `spanish.js` | Spanish text to IPA phonemes for Kokoro's Spanish voices |
+| `g2p/` | English pronunciation dictionaries: misaki (us_gold + us_silver) and CMUdict in misaki's alphabet |
 
 ## Run it on your PC
 
@@ -26,7 +30,7 @@ python -m http.server 8000
 
 then open the address it prints (for example http://localhost:8000). Use a
 current Chrome, Edge, Firefox or Safari. An internet connection is needed the
-first time (libraries from jsDelivr, voice model from Hugging Face).
+first time (libraries from jsDelivr, voice models from Hugging Face).
 
 ## Put it online
 
@@ -40,8 +44,11 @@ Pages, GitHub Pages or Vercel. No build step, no environment variables.
    from the EPUB table of contents, the PDF outline, or "Chapter N" headings,
    with a fallback to blocks of 10 pages.
 2. Text is split into sentences. Click any sentence to start reading from it.
-3. On the first Play, the voice model downloads and is cached by the browser:
-   about 330 MB with WebGPU (fast), about 90 MB on CPU (slower).
+3. On the first Play, the voice model for the book's language downloads and is
+   kept in the browser's cache: about 17 MB of model plus 2 MB of voices (English
+   also loads 2 MB of pronunciation dictionaries). Text becomes phonemes on the
+   page (`english.js`, `spanish.js`), and the model runs with WebGPU when the
+   browser has it, otherwise on the CPU.
 4. Sentences are generated about 40 seconds ahead of the playhead and queued in
    the Web Audio API, so playback starts after a few seconds, not after the whole
    book is processed.
@@ -55,14 +62,18 @@ Pages, GitHub Pages or Vercel. No build step, no environment variables.
 
 - Scanned PDFs (images of pages) have no text. They need OCR first.
 - DRM-protected EPUBs (Kindle, Kobo, Adobe DRM) cannot be read.
-- English and Spanish only. kokoro-js only phonemizes English, so Spanish text is
-  turned into phonemes by `spanish.js` (rules; Latin American, Río de la Plata or
-  Spain accent, chosen next to the voice; reads money, dates, times and ordinals) and sent
-  to the model with `generate_from_ids`. Spanish voices (Dora, Alex, Santa) are
-  rated lower than the English ones. A Spanish book switches to a Spanish voice
-  automatically.
-- On a slow CPU, generation can be slower than playback and you will hear pauses.
-  The status line shows the current speed. WebGPU or saving audio first fixes this.
+- English and Spanish only (KittenTTS 2 nano also has German, French, Italian,
+  Portuguese, Russian and Hindi models; they would need a phonemizer each).
+  Spanish text is turned into phonemes by `spanish.js` (rules; Latin American,
+  Río de la Plata or Spain accent, chosen next to the voice; reads money, dates,
+  times and ordinals). A Spanish book switches to a Spanish voice automatically.
+- English words missing from both dictionaries are guessed from common suffixes,
+  then spelled out letter by letter.
+- Without WebGPU, generation runs on one CPU thread (the page isn't
+  cross-origin isolated) and can be slower than playback, so you will hear pauses.
+  The status line shows the current speed. Saving audio first avoids this.
+- ONNX Runtime Web is pinned to 1.22.0: from 1.29 its WebGPU backend cannot load
+  this model.
 - Multi-column PDFs and tables are read in the order the PDF stores them, which
   is not always the visual order.
 
@@ -70,13 +81,15 @@ Pages, GitHub Pages or Vercel. No build step, no environment variables.
 
 A native Android version (Kotlin, Jetpack Compose) is in [`android/`](android/). It
 reads with the phone's own voice by default (instant, any installed language) or
-with Kokoro on the phone, keeps reading with the screen off, and has lock-screen
+with Kokoro on the phone (the web version now uses KittenTTS), keeps reading with the screen off, and has lock-screen
 and headphone controls. See [`android/README.md`](android/README.md) to build it.
 
 ## Changing things
 
-- Library versions and the model id are pinned at the top of `app.js`.
-- Voices: edit the `VOICES` list in `app.js` (ids come from Kokoro's voice list).
+- Library versions are pinned at the top of `app.js` and `kitten.js`; the model
+  is pinned to a Hugging Face commit in `kitten.js`.
+- Voices: edit the `VOICES` list in `app.js` (`language:key`, keys from the
+  model's `config.json`).
 - Pause lengths between sentences and paragraphs: `GAP_SENTENCE` and
   `GAP_PARAGRAPH` in `app.js`.
 - Colors and fonts: the "Terminal Void Audio" skin at the end of the `<style>` in
@@ -86,6 +99,7 @@ and headphone controls. See [`android/README.md`](android/README.md) to build it
 
 ## Credits
 
-Kokoro-82M (Apache-2.0) by hexgrad, `kokoro-js` and Transformers.js by Hugging
-Face, pdf.js by Mozilla, JSZip. Sample text: Jane Austen, *Pride and Prejudice*
+KittenTTS 2 nano (Apache-2.0) by KittenML, misaki dictionaries (Apache-2.0) by
+hexgrad, CMUdict (BSD) via KittenML, ONNX Runtime Web by Microsoft, pdf.js by
+Mozilla, JSZip. Sample text: Jane Austen, *Pride and Prejudice*
 (public domain). Inspired by plusuncold/autiobooks.
