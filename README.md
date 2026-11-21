@@ -81,7 +81,7 @@ Pages, GitHub Pages or Vercel. No build step, no environment variables.
 
 A native Android version (Kotlin, Jetpack Compose) is in [`android/`](android/). It
 reads with the phone's own voice by default (instant, any installed language) or
-with Kokoro on the phone (the web version now uses KittenTTS), keeps reading with the screen off, and has lock-screen
+with KittenTTS on the phone, keeps reading with the screen off, and has lock-screen
 and headphone controls. See [`android/README.md`](android/README.md) to build it.
 
 ## Changing things

@@ -3,7 +3,7 @@ package com.lectern.app.tts
 import java.text.Normalizer
 
 /**
- * Spanish text -> IPA phonemes for Kokoro's Spanish voices.
+ * Spanish text -> IPA phonemes for KittenTTS's Spanish model.
  * Port of the web app's spanish.js: lenited β ð ɣ between vowels, ˈ before the stressed
  * vowel (eSpeak NG "es" style, which the voices were trained on). The accent decides c/z
  * (s or θ) and ll/y (ʝ, ʃ or ʎ).

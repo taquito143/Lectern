@@ -14,7 +14,7 @@ import com.lectern.app.text.Book
 import com.lectern.app.text.Parsers
 import com.lectern.app.text.Sentence
 import com.lectern.app.tts.EnglishPhonemizer
-import com.lectern.app.tts.KokoroEngine
+import com.lectern.app.tts.KittenEngine
 import com.lectern.app.tts.ModelFiles
 import com.lectern.app.tts.SpanishPhonemizer
 import kotlinx.coroutines.CancellationException
@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The whole reading engine: the open book, the sentence list, the position, and the
- * generate-ahead audio pipeline (Kokoro -> AudioTrack). One instance for the app; the UI
+ * generate-ahead audio pipeline (KittenTTS -> AudioTrack). One instance for the app; the UI
  * and the PlaybackService (notification / lock screen) both observe [state].
  */
 object Reader {
@@ -52,8 +52,8 @@ object Reader {
     /** SYSTEM: the wallpaper color (Android 12+). LIME: the design's acid lime. */
     enum class AccentMode(val label: String) { SYSTEM("Sistema"), LIME("Lima") }
 
-    /** SYSTEM: the phone's own voice, instant. KOKORO: better voice, generated on the phone (slow on older phones). */
-    enum class Engine { SYSTEM, KOKORO }
+    /** SYSTEM: the phone's own voice, instant. KITTEN: KittenTTS, a more natural voice generated on the phone. */
+    enum class Engine { SYSTEM, KITTEN }
 
     data class State(
         val book: Book? = null,
@@ -99,28 +99,35 @@ object Reader {
         data class EndOfSection(val section: Int) : Sleep
     }
 
+    /** KittenTTS 2 nano voices, as "language:key" (keys from the model's config.json). */
     val VOICES: List<Pair<String, List<Pair<String, String>>>> = listOf(
-        "Español" to listOf("ef_dora" to "Dora", "em_alex" to "Alex", "em_santa" to "Santa"),
-        "English (US), female" to listOf("af_heart" to "Heart", "af_bella" to "Bella", "af_nicole" to "Nicole", "af_sarah" to "Sarah", "af_sky" to "Sky", "af_nova" to "Nova", "af_aoede" to "Aoede", "af_kore" to "Kore", "af_alloy" to "Alloy", "af_jessica" to "Jessica", "af_river" to "River"),
-        "English (US), male" to listOf("am_adam" to "Adam", "am_michael" to "Michael", "am_fenrir" to "Fenrir", "am_puck" to "Puck", "am_echo" to "Echo", "am_eric" to "Eric", "am_liam" to "Liam", "am_onyx" to "Onyx"),
-        "English (UK), female" to listOf("bf_emma" to "Emma", "bf_isabella" to "Isabella", "bf_alice" to "Alice", "bf_lily" to "Lily"),
-        "English (UK), male" to listOf("bm_george" to "George", "bm_lewis" to "Lewis", "bm_daniel" to "Daniel", "bm_fable" to "Fable"),
+        "Español" to listOf("es:sofia" to "Sofia", "es:elena" to "Elena", "es:pablo" to "Pablo", "es:mateo" to "Mateo"),
+        "English, female" to listOf("en:eleanor" to "Eleanor", "en:martha" to "Martha", "en:serena" to "Serena", "en:iris" to "Iris", "en:grace" to "Grace", "en:edith" to "Edith"),
+        "English, male" to listOf("en:otis" to "Otis", "en:vincent" to "Vincent", "en:max" to "Max", "en:danny" to "Danny"),
     )
     val SPEEDS = listOf(0.8f, 1f, 1.25f, 1.5f, 1.75f, 2f)
     fun voiceName(id: String) = VOICES.flatMap { it.second }.firstOrNull { it.first == id }?.second ?: id
-    fun isSpanishVoice(id: String) = id.startsWith("e")
-    private val DEFAULT_VOICE = mapOf(true to "ef_dora", false to "af_heart")
+    fun isSpanishVoice(id: String) = id.startsWith("es:")
+    private fun voiceLang(id: String) = if (isSpanishVoice(id)) "es" else "en"
+    private val DEFAULT_VOICE = mapOf(true to "es:sofia", false to "en:eleanor")
+    private val VOICE_IDS = VOICES.flatMap { v -> v.second.map { it.first } }.toSet()
+    /** Voices saved by the Kokoro version (ef_dora, af_heart…) map to a default of the same language. */
+    private fun knownVoice(id: String?): String = when {
+        id in VOICE_IDS -> id!!
+        id != null && Regex("^e[fm]_").containsMatchIn(id) -> DEFAULT_VOICE.getValue(true)
+        else -> DEFAULT_VOICE.getValue(false)
+    }
 
     /** How far ahead of the listener audio is generated and kept on disk. */
     private const val PREFETCH_SECONDS = 600.0
     private const val GAP_SENTENCE = 0.06
     private const val GAP_PARAGRAPH = 0.45
-    private const val SR = KokoroEngine.SAMPLE_RATE
+    private const val SR = KittenEngine.SAMPLE_RATE
 
     private lateinit var app: Context
     private lateinit var store: Store
     private lateinit var files: ModelFiles
-    private val engine by lazy { KokoroEngine(app) }
+    private val engine by lazy { KittenEngine(app) }
     private val english by lazy { EnglishPhonemizer(app) }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -134,7 +141,7 @@ object Reader {
         files = ModelFiles(app)
         _state.update {
             it.copy(
-                voice = store.getString("voice", "ef_dora"),
+                voice = knownVoice(store.getString("voice", DEFAULT_VOICE.getValue(true))),
                 speed = store.getFloat("speed", 1f).let { s -> SPEEDS.minBy { kotlin.math.abs(it - s) } },
                 pitch = store.getFloat("pitch", 1f),
                 textSize = store.getFloat("textSize", 17f).toInt(),
@@ -143,7 +150,8 @@ object Reader {
                 theme = runCatching { ThemeMode.valueOf(store.getString("theme", "SYSTEM")) }.getOrDefault(ThemeMode.SYSTEM),
                 accentMode = runCatching { AccentMode.valueOf(store.getString("accentMode", "SYSTEM")) }.getOrDefault(AccentMode.SYSTEM),
                 listened = store.getString("listened", "0").toLongOrNull() ?: 0,
-                engine = runCatching { Engine.valueOf(store.getString("engine", "SYSTEM")) }.getOrDefault(Engine.SYSTEM),
+                engine = store.getString("engine", "SYSTEM").let { if (it == "KOKORO") "KITTEN" else it }
+                    .let { runCatching { Engine.valueOf(it) }.getOrDefault(Engine.SYSTEM) },
                 systemVoice = store.getString("systemVoice", "").ifEmpty { null },
                 accent = runCatching { SpanishPhonemizer.Accent.valueOf(store.getString("accent", "LATAM")) }.getOrDefault(SpanishPhonemizer.Accent.LATAM),
                 library = store.library(),
@@ -234,7 +242,8 @@ object Reader {
         val pos = store.position(id).coerceIn(0, maxOf(0, sentences.size - 1))
         // A Spanish book read by an English voice (or the reverse) is unintelligible.
         var voice = state.value.voice
-        if (isSpanishVoice(voice) != spanish) voice = store.getString("voice:${if (spanish) "es" else "en"}", DEFAULT_VOICE.getValue(spanish))
+        if (isSpanishVoice(voice) != spanish) voice = knownVoice(store.getString("voice:${if (spanish) "es" else "en"}", DEFAULT_VOICE.getValue(spanish)))
+            .let { if (isSpanishVoice(it) == spanish) it else DEFAULT_VOICE.getValue(spanish) }
         store.putString("voice", voice)
         store.upsert(LibraryEntry(id, book.title, uri, sentences.size, pos, System.currentTimeMillis()))
         set {
@@ -341,7 +350,7 @@ object Reader {
     fun setLanguage(code: String?) {
         store.putString("language", code ?: "")
         set { it.copy(language = code, systemVoices = emptyList()) }
-        if (code != null && code != "es" && code != "en" && state.value.engine == Engine.KOKORO) setEngine(Engine.SYSTEM)
+        if (code != null && code != "es" && code != "en" && state.value.engine == Engine.KITTEN) setEngine(Engine.SYSTEM)
         loadSystemVoices()
         restartIfActive()
     }
@@ -402,12 +411,12 @@ object Reader {
         else s.sentences.indexOfFirst { it.section == sec - 1 }.takeIf { it >= 0 }?.let { select(it) }
     }
 
-    /** Bytes of generated Kokoro audio on disk. */
+    /** Bytes of generated KittenTTS audio on disk. */
     fun audioCacheBytes(): Long = java.io.File(app.cacheDir, "audio").walkBottomUp().filter { it.isFile }.sumOf { it.length() }
 
     fun clearAudioCache() {
         stopPrefetch()
-        if (state.value.engine == Engine.KOKORO && state.value.status != Status.IDLE) stop()
+        if (state.value.engine == Engine.KITTEN && state.value.status != Status.IDLE) stop()
         java.io.File(app.cacheDir, "audio").deleteRecursively()
         cache.reset()
     }
@@ -458,7 +467,7 @@ object Reader {
                 if (my == epoch) set {
                     it.copy(
                         status = Status.IDLE,
-                        error = "Este teléfono no tiene un motor de voz. Instala \"Servicios de voz de Google\" desde Play Store, o elige Kokoro.",
+                        error = "Este teléfono no tiene un motor de voz. Instala \"Servicios de voz de Google\" desde Play Store, o elige KittenTTS.",
                     )
                 }
                 return@launch
@@ -527,7 +536,7 @@ object Reader {
     @Volatile private var epoch = 0
     private var pipeline: Job? = null
     @Volatile private var track: AudioTrack? = null
-    private var voiceData: FloatArray? = null
+    private var voiceData: KittenEngine.Pack? = null
     /** Seconds of audio generated per second of work, smoothed. Below 1 the phone is slower than reading. */
     @Volatile private var genRate = 0.0
 
@@ -584,9 +593,11 @@ object Reader {
     }
 
     private suspend fun ensureReady() = withContext(Dispatchers.IO) {
-        if (!files.hasModel) {
+        val voice = state.value.voice
+        val lang = voiceLang(voice)
+        if (!files.has(lang)) {
             set { it.copy(message = "Descargando el modelo de voz…", progress = 0f) }
-            files.ensureModel { loaded, total ->
+            files.ensure(lang) { loaded, total ->
                 val f = if (total > 0) loaded.toFloat() / total else 0f
                 set {
                     it.copy(
@@ -596,13 +607,12 @@ object Reader {
                 }
             }
         }
-        if (!engine.isLoaded) {
+        if (!engine.isLoaded(lang)) {
             set { it.copy(message = "Cargando el modelo de voz…", progress = null) }
-            engine.load(files.model)
+            engine.load(lang, files.model(lang), files.voices(lang))
         }
-        val voice = state.value.voice
-        voiceData = engine.loadVoice(voice, files.ensureVoice(voice))
-        if (!isSpanishVoice(voice)) {
+        voiceData = engine.voice(lang, voice.substringAfter(':'))
+        if (lang == "en") {
             set { it.copy(message = "Cargando el diccionario inglés…") }
             english.phonemize("ready")
         }
@@ -636,7 +646,7 @@ object Reader {
                 val pcm = try {
                     val text = sentences[i].text
                     val ph = if (isSpanishVoice(voice)) SpanishPhonemizer.phonemize(text) else english.phonemize(text)
-                    engine.generate(ph, voiceVec, speed)
+                    engine.generate(voiceLang(voice), ph, voiceVec, speed)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {

@@ -7,19 +7,26 @@ import java.text.Normalizer
 import java.util.zip.GZIPInputStream
 
 /**
- * English text -> Kokoro phonemes using misaki's pronunciation dictionaries
- * (us_gold + us_silver, the same lexicon Kokoro was trained with).
- * Words missing from the dictionary are tried without common suffixes, then spelled out.
+ * English text -> misaki phonemes for KittenTTS's English model, which learned English from
+ * misaki's dictionaries (us_gold + us_silver) with CMUdict for the words misaki lacks.
+ * Words in neither are tried without common suffixes, then as compounds of dictionary words
+ * ("Netherfield" = nether + field), and only then spelled out. Same rules as english.js.
  */
 class EnglishPhonemizer(context: Context) {
 
     private val dict: HashMap<String, String> = HashMap(200_000)
+    private val cmu: HashMap<String, String> = HashMap(130_000)
 
     init {
-        context.assets.open("en_dict.tsv.gz").use { raw ->
+        readTsvGz(context, "en_dict.tsv.gz", dict)
+        readTsvGz(context, "cmu_misaki_us.tsv.gz", cmu)
+    }
+
+    private fun readTsvGz(context: Context, name: String, into: HashMap<String, String>) {
+        context.assets.open(name).use { raw ->
             BufferedReader(InputStreamReader(GZIPInputStream(raw), Charsets.UTF_8), 1 shl 16).forEachLine { line ->
                 val tab = line.indexOf('\t')
-                if (tab > 0) dict[line.substring(0, tab)] = line.substring(tab + 1)
+                if (tab > 0) into[line.substring(0, tab)] = line.substring(tab + 1)
             }
         }
     }
@@ -31,7 +38,7 @@ class EnglishPhonemizer(context: Context) {
         lookup(word)?.let { return it }
         val w = word.lowercase()
         // possessive / plural
-        if (w.endsWith("'s") || w.endsWith("’s")) lookup(w.dropLast(2))?.let { return it + sibilantS(it) }
+        if (w.endsWith("'s") || w.endsWith("’s")) (lookup(w.dropLast(2)) ?: cmu[w.dropLast(2)])?.let { return it + sibilantS(it) }
         if (w.endsWith("s'")) lookup(w.dropLast(1))?.let { return it }
         if (w.endsWith("ies")) lookup(w.dropLast(3) + "y")?.let { return it.dropLast(1) + "iz" }
         if (w.endsWith("es")) lookup(w.dropLast(2))?.let { return it + "ɪz" }
@@ -44,12 +51,31 @@ class EnglishPhonemizer(context: Context) {
         }
         if (w.endsWith("ing")) (lookup(w.dropLast(3)) ?: lookup(w.dropLast(3) + "e"))?.let { return it + "ɪŋ" }
         if (w.endsWith("ly")) lookup(w.dropLast(2))?.let { return it + "li" }
-        // compounds written with a hyphen
-        if ('-' in w) {
-            val parts = w.split('-').filter { it.isNotEmpty() }.map { stem(it) ?: return null }
-            return parts.joinToString(" ")
+        return null
+    }
+
+    private fun known(word: String): String? = stem(word) ?: cmu[word.lowercase()]
+
+    /**
+     * Compounds missing from the dictionaries, as two or three dictionary words of 4+ letters
+     * (shorter pieces like "ley" split names wrongly). Joined into one word; only the first
+     * part keeps primary stress, as in a spoken compound.
+     */
+    private fun compound(word: String, depth: Int = 0): String? {
+        val w = word.lowercase()
+        if (w.length < 8) return null
+        for (i in w.length - 4 downTo 4) {
+            val head = known(w.substring(0, i)) ?: continue
+            val tail = known(w.substring(i)) ?: (if (depth < 1) compound(w.substring(i), depth + 1) else null) ?: continue
+            return head.trim() + tail.trim().replace('ˈ', 'ˌ')
         }
         return null
+    }
+
+    private fun sayWord(word: String): String {
+        known(word)?.let { return it }
+        if ('-' in word) return word.split('-').filter { it.isNotEmpty() }.joinToString(" ") { sayWord(it) }
+        return compound(word) ?: spell(word)
     }
 
     private fun sibilantS(base: String): String = when (base.lastOrNull()) {
@@ -75,8 +101,13 @@ class EnglishPhonemizer(context: Context) {
         return n.toString()
     }
 
+    // Read out, and without the period, which the model would say as a sentence end.
+    private val ABBREVIATIONS = mapOf("Mr" to "Mister", "Mrs" to "Missus", "Ms" to "Miz", "Dr" to "Doctor",
+        "St" to "Saint", "Jr" to "Junior", "Sr" to "Senior", "Prof" to "Professor")
+
     private fun normalize(text: String): String {
         var t = Normalizer.normalize(text, Normalizer.Form.NFKC)
+        t = Regex("\\b(Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof)\\.(?=\\s)").replace(t) { ABBREVIATIONS.getValue(it.groupValues[1]) }
         // Years read as pairs: 1813 -> eighteen thirteen
         t = Regex("\\b(1[1-9])(\\d{2})\\b").replace(t) { m ->
             val hi = m.groupValues[1].toLong()
@@ -100,16 +131,25 @@ class EnglishPhonemizer(context: Context) {
 
     private val TOKEN = Regex("[\\p{L}][\\p{L}'’\\-]*[\\p{L}]|[\\p{L}]")
     private val PUNCT = ";:,.!?—…\"()“”"
+    private val VOWEL_START = Regex("^[ˈˌ]?[AIOWYaeiouæɑɐɒɔəɛɜɪʊʌᵊᵻ]")
 
     fun phonemize(text: String): String {
         val t = normalize(text)
         val sb = StringBuilder()
         var last = 0
         fun gap(s: String) { for (ch in s) sb.append(if (ch in PUNCT) ch else ' ') }
-        for (m in TOKEN.findAll(t)) {
+        val words = TOKEN.findAll(t).toList()
+        for ((k, m) in words.withIndex()) {
             gap(t.substring(last, m.range.first))
             val w = m.value.replace('’', '\'')
-            sb.append(stem(w) ?: spell(w)).append(' ')
+            // misaki's function-word rules: "a" is ɐ, "the" is ði before a vowel and ðə otherwise.
+            val ps = when {
+                w == "a" -> "ɐ"
+                w.equals("the", ignoreCase = true) ->
+                    if (words.getOrNull(k + 1)?.let { VOWEL_START.containsMatchIn(sayWord(it.value)) } == true) "ði" else "ðə"
+                else -> sayWord(w)
+            }
+            sb.append(ps).append(' ')
             last = m.range.last + 1
         }
         gap(t.substring(last))

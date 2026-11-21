@@ -10,7 +10,7 @@ import java.util.Locale
 
 /**
  * The phone's own text-to-speech engine (usually Google's). It speaks in real time on any
- * phone, so it is the fast option next to Kokoro. Sentences are queued a few at a time;
+ * phone, so it is the fast option next to KittenTTS. Sentences are queued a few at a time;
  * each utterance id is "<run>:<sentence index>" so callbacks from a stopped run are ignored.
  */
 class SystemSpeech(private val context: Context) {

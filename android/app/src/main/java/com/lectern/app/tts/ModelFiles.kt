@@ -5,29 +5,34 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Downloads the Kokoro model and voices from Hugging Face once, into the app's private storage. */
+/**
+ * Downloads a KittenTTS 2 nano language (model about 17 MB, voices about 2 MB) from Hugging
+ * Face once, into the app's private storage. Pinned to a commit so a model update can't
+ * break the app; the web version uses the same files.
+ */
 class ModelFiles(context: Context) {
 
     companion object {
-        private const val REPO = "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main"
-        private const val MODEL_PATH = "onnx/model_quantized.onnx" // 8-bit, about 92 MB (same as the web CPU engine)
+        private const val REPO = "https://huggingface.co/KittenML/kitten-tts-2-nano/resolve/0843ae614780b04e4260c91b601e374c4b81250d"
     }
 
-    private val dir = File(context.filesDir, "kokoro").apply { mkdirs() }
+    private val dir = File(context.filesDir, "kitten").apply { mkdirs() }
 
-    val model = File(dir, "model_quantized.onnx")
-    fun voice(id: String) = File(dir, "voices/$id.bin")
-
-    val hasModel get() = model.isFile && model.length() > 0
-
-    fun ensureModel(onProgress: (loaded: Long, total: Long) -> Unit) {
-        if (!hasModel) download("$REPO/$MODEL_PATH", model, onProgress)
+    init {
+        // The Kokoro model of earlier versions (92 MB) is no longer used.
+        File(context.filesDir, "kokoro").takeIf { it.exists() }?.deleteRecursively()
     }
 
-    fun ensureVoice(id: String): File {
-        val f = voice(id)
-        if (!f.isFile || f.length() == 0L) download("$REPO/voices/$id.bin", f) { _, _ -> }
-        return f
+    fun model(lang: String) = File(dir, "kitten_tts_2_nano_$lang.onnx")
+    fun voices(lang: String) = File(dir, "voices_$lang.npz")
+
+    fun has(lang: String) = listOf(model(lang), voices(lang)).all { it.isFile && it.length() > 0 }
+
+    fun ensure(lang: String, onProgress: (loaded: Long, total: Long) -> Unit) {
+        val voices = voices(lang)
+        if (!voices.isFile || voices.length() == 0L) download("$REPO/${voices.name}", voices) { _, _ -> }
+        val model = model(lang)
+        if (!model.isFile || model.length() == 0L) download("$REPO/${model.name}", model, onProgress)
     }
 
     private fun download(url: String, dest: File, onProgress: (Long, Long) -> Unit) {

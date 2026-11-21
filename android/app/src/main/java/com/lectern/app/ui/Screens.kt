@@ -170,7 +170,7 @@ private fun Header(title: String, state: Reader.State) {
             Spacer(Modifier.width(8.dp))
             Text("LECTERN", style = pixelUi(9, p.accent))
             Text("  ::  ", style = telemetry(10, p.outline))
-            Text(if (state.engine == Reader.Engine.SYSTEM) "VOZ TELÉFONO" else "KOKORO", style = telemetry(10, p.muted))
+            Text(if (state.engine == Reader.Engine.SYSTEM) "VOZ TELÉFONO" else "KITTENTTS", style = telemetry(10, p.muted))
             Spacer(Modifier.weight(1f))
             Text(statusText, style = pixelUi(8, statusColor), modifier = Modifier.border(1.dp, statusColor.copy(alpha = 0.5f)).padding(horizontal = 6.dp, vertical = 2.dp))
         }
@@ -339,7 +339,7 @@ private fun speedLabel(s: Float) = "${s.toString().removeSuffix(".0")}x"
 
 private fun voiceLabel(state: Reader.State) = if (state.engine == Reader.Engine.SYSTEM)
     state.systemVoices.firstOrNull { it.first == state.systemVoice }?.second ?: state.systemVoices.firstOrNull()?.second ?: "Voz del teléfono"
-else "Kokoro · ${Reader.voiceName(state.voice)}"
+else "KittenTTS · ${Reader.voiceName(state.voice)}"
 
 /* ------------------------------------------------------------------ */
 /* Library                                                             */
@@ -594,7 +594,7 @@ private fun PlayerScreen(state: Reader.State, onVoices: () -> Unit, onReader: ()
             // Deck with the pixel equalizer
             Column(Modifier.fillMaxWidth().pixelBox(p.container, p.edge, borderWidth = 3.dp, shadow = 4.dp).padding(12.dp)) {
                 Row {
-                    Text(if (state.engine == Reader.Engine.SYSTEM) "MOTOR :: TELÉFONO" else "MOTOR :: KOKORO", style = telemetry(10, p.accent, 700), modifier = Modifier.weight(1f))
+                    Text(if (state.engine == Reader.Engine.SYSTEM) "MOTOR :: TELÉFONO" else "MOTOR :: KITTENTTS", style = telemetry(10, p.accent, 700), modifier = Modifier.weight(1f))
                     Text(if (state.spanish) "IDIOMA // ES" else "IDIOMA // EN", style = telemetry(10, p.cyanSoft, 700))
                 }
                 Spacer(Modifier.height(8.dp))
@@ -947,9 +947,9 @@ private fun SettingsScreen(state: Reader.State, onVoices: () -> Unit) {
                     "RÁPIDA", p.accent, state.engine == Reader.Engine.SYSTEM,
                 ) { Reader.setEngine(Reader.Engine.SYSTEM) }
                 EngineOption(
-                    "Kokoro", "Voz más natural, generada en el teléfono. Descarga 92 MB; en teléfonos lentos prepara el audio antes y hace pausas.",
-                    "NATURAL", p.cyan, state.engine == Reader.Engine.KOKORO,
-                ) { Reader.setEngine(Reader.Engine.KOKORO) }
+                    "KittenTTS", "Voz más natural, generada en el teléfono. Descarga unos 20 MB por idioma; en teléfonos lentos prepara el audio antes.",
+                    "NATURAL", p.cyan, state.engine == Reader.Engine.KITTEN,
+                ) { Reader.setEngine(Reader.Engine.KITTEN) }
                 Row(Modifier.fillMaxWidth().pixelBox(p.low, p.seam, shadow = 2.dp).clickable(onClick = onVoices).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("VOZ E IDIOMA", style = telemetry(10, p.muted, 700))
@@ -958,7 +958,7 @@ private fun SettingsScreen(state: Reader.State, onVoices: () -> Unit) {
                     }
                     Text("CAMBIAR ▶", style = pixelUi(9, p.accent, bold = true))
                 }
-                if (state.engine == Reader.Engine.KOKORO) {
+                if (state.engine == Reader.Engine.KITTEN) {
                     Text("ACENTO (ESPAÑOL)", style = telemetry(10, p.muted, 700))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SpanishPhonemizer.Accent.entries.forEach { a -> Chip(a.label, a == state.accent, Modifier.weight(1f)) { Reader.setAccent(a) } }
@@ -1031,7 +1031,7 @@ private fun SettingsScreen(state: Reader.State, onVoices: () -> Unit) {
                 val mb = if (cacheBytes < 0) "…" else "%.1f MB".format(cacheBytes / 1_048_576.0)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("AUDIO DE KOKORO GUARDADO", style = telemetry(10, p.muted, 700))
+                        Text("AUDIO DE KITTENTTS GUARDADO", style = telemetry(10, p.muted, 700))
                         Text("Se reutiliza al volver a escuchar. Máximo 400 MB.", style = grotesk(13, p.muted))
                     }
                     Text(mb, style = telemetry(12, p.accent, 700), modifier = Modifier.background(p.well).border(1.dp, p.accent.copy(alpha = 0.4f)).padding(horizontal = 6.dp, vertical = 3.dp))
@@ -1131,7 +1131,7 @@ private fun VoiceSheet(state: Reader.State, onDismiss: () -> Unit) {
             item {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Chip("Teléfono", state.engine == Reader.Engine.SYSTEM, Modifier.weight(1f)) { Reader.setEngine(Reader.Engine.SYSTEM) }
-                    Chip("Kokoro", state.engine == Reader.Engine.KOKORO, Modifier.weight(1f)) { Reader.setEngine(Reader.Engine.KOKORO) }
+                    Chip("KittenTTS", state.engine == Reader.Engine.KITTEN, Modifier.weight(1f)) { Reader.setEngine(Reader.Engine.KITTEN) }
                 }
             }
             if (state.engine == Reader.Engine.SYSTEM) {
