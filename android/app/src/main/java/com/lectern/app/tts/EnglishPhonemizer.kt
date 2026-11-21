@@ -22,9 +22,13 @@ class EnglishPhonemizer(context: Context) {
         readTsvGz(context, "cmu_misaki_us.tsv.gz", cmu)
     }
 
+    // The APK packager stores *.gz assets decompressed and without ".gz", so the plain
+    // name is tried first; the gzip one stays for builds that keep it.
     private fun readTsvGz(context: Context, name: String, into: HashMap<String, String>) {
-        context.assets.open(name).use { raw ->
-            BufferedReader(InputStreamReader(GZIPInputStream(raw), Charsets.UTF_8), 1 shl 16).forEachLine { line ->
+        val stream = runCatching { context.assets.open(name.removeSuffix(".gz")) }.getOrNull()
+            ?: GZIPInputStream(context.assets.open(name))
+        stream.use { raw ->
+            BufferedReader(InputStreamReader(raw, Charsets.UTF_8), 1 shl 16).forEachLine { line ->
                 val tab = line.indexOf('\t')
                 if (tab > 0) into[line.substring(0, tab)] = line.substring(tab + 1)
             }
